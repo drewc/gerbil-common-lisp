@@ -1,0 +1,634 @@
+
+* Package Concepts
+  :PROPERTIES:
+  :CUSTOM_ID: Section11.1
+  :END:
+
+** Introduction to Packages
+
+A package establishes a mapping from names to symbols. At any given time, one package is
+current. The current package is the one that is the value of *~*package*~* . When using the Lisp
+reader , it is possible to refer to symbols in packages other than the current one through the use of
+package prefixes in the printed representation of the symbol .
+Figure 11–1 lists some defined names that are applicable to packages. Where an operator takes an
+argument that is either a symbol or a list of symbols, an argument of nil is treated as an empty list
+of symbols. Any package argument may be either a string, a symbol , or a package. If a symbol is
+supplied, its name will be used as the package name.
+
+#+CAPTION:  Figure 11–1. Some Defined Names related to Packages 
+#+ATTR_HTML: :org-html-table-caption-above t
+| ~*modules*~      | ~*package*~          | defpackage                                          |
+| do-all-symbols   | do-external-symbols  | do-symbols                                          |
+| export           | find-all-symbols     | find-package                                        |
+| find-symbol      | import               | in-package                                          |
+| intern           | list-all-packages    | make-package                                        |
+| package-name     | package-nicknames    | package-shadowing-symbols                           |
+| package-use-list | package-used-by-list | provide                                             |
+| rename-package   | require              | shadow                                              |
+| shadowing-import | unexport             | unintern                                            |
+| unuse-package    | use-package          | 
+|                  |                      |                                                     |
+ :
+
+11.1.1.1 Package Names and Nicknames
+Each package has a name (a string) and perhaps some nicknames (also strings). These are assigned
+when the package is created and can be changed later.
+There is a single namespace for packages. The function find-package translates a package name or
+nickname into the associated package. The function package-name returns the name of a package.
+The function package-nicknames returns a list of all nicknames for a package. rename-package
+removes a package’s current name and nicknames and replaces them with new ones specified by
+the caller.
+11.1.1.2 Symbols in a Package
+
+* Dictionary 
+
+** /System Class/ package 
+
+ * Class Precedence List ::
+      package , t
+
+ * Description :: 
+
+ A package is a namespace that maps symbol names to symbols; see
+ Section 11.1 (Package Concepts).  See Also: Section 11.1 (Package
+ Concepts), Section 22.1.3.13 (Printing Other Objects), Section 2.3.4
+ (Symbols as Tokens)
+
+*** /gerbil class/ package 
+
+In gerbil, packages are an overlay of an *~expander-context~*, with
+*~module-context~* being primary. We make our own contructor because
+of *~make-package~* being a function we are supposed to implement and
+export.
+
+#+name: defclass-package
+#+BEGIN_SRC scheme
+  (defclass package
+    (expander-context)
+    constructor: %make-package)
+
+  (defmethod  {%make-package package}
+    (lambda (self e)
+      (class-instance-init! self)
+      (set! (@ self expander-context ) e)
+      self))
+#+END_SRC
+
+We hash up based on identity. [[#find-package-section][~find-package~]] uses it to make sure that
+there is no no no duplication.
+
+#+name: package<-expander-context  
+#+BEGIN_SRC scheme :padline yes
+  (def package<-expander-context-hash
+    (make-hash-table-eq))
+
+#+END_SRC
+
+When it cannot be found, we make it. 
+
+#+name: package<-expander-context 
+#+BEGIN_SRC scheme :padline yes
+  (def (package<-expander-context expander-context)
+    (or (hash-get package<-expander-context-hash expander-context)
+	(let (package (make-package  expander-context))
+	  (begin0 package
+	    (hash-put! package<-expander-context-hash expander-context package)))))
+#+END_SRC
+
+
+** /Function/ find-package
+   :PROPERTIES:
+   :CUSTOM_ID: find-package-section
+   :END:
+
+  - Syntax ::  find-package name
+              → package
+  - Arguments and Values :: 
+       name—a string designator or a package object or a gx#module-context.
+       package—a package object or #f .
+
+  - Description :: If name is a string designator , find-package             
+		   locates and returns the package whose name or nickname is
+                   name. This search is case sensitive. If there is no
+                   such package, find-package returns #f .
+		   
+		   If name is a package object or a gx#module-context, that
+                   package object is returned.
+
+    - Examples ::
+
+     #+BEGIN_SRC lisp
+     (find-package ’common-lisp) → #<PACKAGE "COMMON-LISP">
+     (find-package "COMMON-LISP-USER") → #<PACKAGE "COMMON-LISP-USER">
+     (find-package ’not-there) → NIL
+     #+END_SRC
+
+
+    - Affected By ::
+
+    The set of packages created by the implementation.
+    defpackage , delete-package , make-package , rename-package
+
+    - See Also ::
+    
+    *~make-package~*
+
+*** /gerbil function/ find-package
+
+#+NAME: find-package
+#+BEGIN_SRC scheme
+  (def package<-symbol-hash
+    (make-hash-table-eq))
+
+  (def (package<-symbol symbol)
+    (or (let (package (hash-get package<-symbol-hash symbol))
+	  (if (and (package? package)
+		   (eq? (package-name package) symbol))
+	    package
+	    #f))
+	(let ((package-list (filter (lambda (p) (eq? (package-name p) symbol))
+				    (list-all-packages))))
+	  (if (pair? package-list)
+	    (begin0 (car package-list)
+	      (hash-put! package<-symbol-hash symbol (car package-list)))
+	    #f))))
+
+  (def (package<-string name)
+    (package<-symbol (string->symbol name)))
+
+  (def (find-package name)
+    (cond
+     ((package? name) name)
+     ((string? name)
+      (package<-string name))
+     ((symbol? name)
+      (package<-symbol name))
+     ((gx#expander-context? name)
+      (package<-expander-context name))
+     (#t (error (format "Not a valid package designator: ~A" name)))))
+
+#+END_SRC
+
+** /Function/ list-all-packages 
+
+ * Syntax ::
+      list-all-packages (no arguments) → packages
+ * Arguments and Values :: 
+      packages—a list of package objects.
+ * Description  :: 
+   list-all-packages returns a fresh list of all registered packages.
+
+ * Examples ::
+(let ((before (list-all-packages)))
+(make-package ’temp)
+(set-difference (list-all-packages) before)) → (#<PACKAGE "TEMP">)
+
+Affected By:
+defpackage , delete-package , make-package
+
+*** ~list-all-packages~ /gerbil function/
+
+All of the registered ~expander-module~'s appear in
+~(gx#current-expander-module-registry)~. A ~package~ is made and
+cached, or simply looked up in the cache.
+
+
+#+NAME: list-all-packages
+#+BEGIN_SRC scheme 
+  (def (list-all-packages)
+   (map find-package
+	(delete-duplicates
+	 (filter
+	  gx#module-context?
+	  (map cdr (hash->list (gx#current-expander-module-registry)))))))
+#+END_SRC
+
+** /Macro/ with-package-iterator
+
+- Syntax ::
+
+    with-package-iterator (name package-list-form &rest symbol-types) declaration* form*
+
+    => result*
+
+- Arguments and Values ::
+
+  - name :: a symbol 
+
+  - package-list-form :: a form; evaluated once to produce a package-list.
+
+  - package-list :: a designator for a list of package designators.
+
+  - symbol-type :: one of the symbols :internal, :external, or :inherited.
+
+  - declaration :: a declare expression; not evaluated.
+
+  - forms :: an implicit progn.
+
+  - results :: the values of the forms.
+
+- Description ::
+
+		 Within the lexical scope of the body forms, the name
+                 is defined via macrolet such that successive
+                 invocations of (name) will return the symbols, one by
+                 one, from the packages in package-list.
+
+		 It is unspecified whether symbols inherited from
+                 multiple packages are returned more than once. The
+                 order of symbols returned does not necessarily
+                 reflect the order of packages in package-list. When
+                 package-list has more than one element, it is
+                 unspecified whether duplicate symbols are returned
+                 once or more than once.
+
+		 Symbol-types controls which symbols that are
+                 accessible in a package are returned as follows:
+
+  - ~:internal~
+
+    The symbols that are present in the package, but that are not exported.
+
+  - ~:external~
+
+    The symbols that are present in the package and are exported.
+
+  - ~:inherited~
+
+    The symbols that are exported by used packages and that are not shadowed.
+
+ When more than one argument is supplied for symbol-types, a symbol is
+                 returned if its accessibility matches any one of the
+                 symbol-types supplied. Implementations may extend
+                 this syntax by recognizing additional symbol
+                 accessibility types.
+
+ An invocation of (name) returns four values as follows:
+
+  1. A flag that indicates whether a symbol is returned (true means
+     that a symbol is returned).
+  2. A symbol that is accessible in one the indicated packages.
+  3. The accessibility type for that symbol; i.e., one of the symbols
+     :internal, :external, or :inherited.
+  4. The package from which the symbol was obtained. The package is
+     one of the packages present or named in package-list.
+
+ After all symbols have been returned by successive invocations of
+                 (name), then only one value is returned, namely nil.
+
+ The meaning of the second, third, and fourth values is that the
+                 returned symbol is accessible in the returned package
+                 in the way indicated by the second return value as
+                 follows:
+
+ - ~:internal~
+
+    Means present and not exported.
+
+ - ~:external~
+
+    Means present and exported.
+
+ - ~:inherited~
+
+    Means not present (thus not shadowed) but inherited from some used package.
+
+ It is unspecified what happens if any of the implicit interior state
+                 of an iteration is returned outside the dynamic
+                 extent of the with-package-iterator form such as by
+                 returning some closure over the invocation form.
+
+ Any number of invocations of with-package-iterator can be nested, and
+ the body of the innermost one can invoke all of the locally
+ established macros, provided all those macros have distinct names.
+
+- Examples ::
+
+ The following function should return t on any package, and signal an error if the usage of with-package-iterator does not agree with the corresponding usage of do-symbols.
+
+ (defun test-package-iterator (package)
+   (unless (packagep package)
+     (setq package (find-package package)))
+   (let ((all-entries '())
+         (generated-entries '()))
+     (do-symbols (x package) 
+       (multiple-value-bind (symbol accessibility) 
+           (find-symbol (symbol-name x) package)
+         (push (list symbol accessibility) all-entries)))
+     (with-package-iterator (generator-fn package 
+                             :internal :external :inherited)
+       (loop     
+         (multiple-value-bind (more? symbol accessibility pkg)
+             (generator-fn)
+           (unless more? (return))
+           (let ((l (multiple-value-list (find-symbol (symbol-name symbol) 
+                                                      package))))
+             (unless (equal l (list symbol accessibility))
+               (error "Symbol ~S not found as ~S in package ~A [~S]"
+                      symbol accessibility (package-name package) l))
+             (push l generated-entries)))))
+     (unless (and (subsetp all-entries generated-entries :test #'equal)
+                  (subsetp generated-entries all-entries :test #'equal))
+      (error "Generated entries and Do-Symbols entries don't correspond"))
+     t))
+
+The following function prints out every present symbol (possibly more than once):
+
+ (defun print-all-symbols () 
+   (with-package-iterator (next-symbol (list-all-packages)
+                           :internal :external)
+     (loop
+       (multiple-value-bind (more? symbol) (next-symbol)
+         (if more? 
+            (print symbol)
+            (return))))))
+
+Side Effects: None.
+
+Affected By: None.
+
+Exceptional Situations:
+
+with-package-iterator signals an error of type program-error if no symbol-types are supplied or if a symbol-type is not recognized by the implementation is supplied.
+
+The consequences are undefined if the local function named name established by with-package-iterator is called after it has returned false as its primary value.
+
+See Also:
+
+Section 3.6 (Traversal Rules and Side Effects)
+
+Notes: None. 
+
+*** /gerbil function/ package-external-symbols
+
+#+NAME: package-external-symbols
+#+BEGIN_SRC scheme
+  (def (package-external-symbols package)
+    (set! package (find-package package))
+    (let* ((context (package-expander-context package))
+	   (exports (gx#module-context-export
+		     context))
+	   (symbols (map gx#module-export-name exports)))
+      #;(values (map gx#module-export-name exports) exports)
+      symbols))      
+#+END_SRC
+
+
+#+NAME: symbol-type-package-binding
+*** /gerbil function/ symbol-type<-package-binding
+
+#+BEGIN_SRC scheme
+  (def (symbol-type<-package-binding package binding)
+    (cond ((or (gx#module-binding? binding)
+	       (gx#syntax-binding? binding))
+	   (if (member (gx#binding-key binding)
+		       (package-external-symbols package))
+	     ':external
+	     ':internal))
+	  ((gx#import-binding? binding)
+	   ':inherited)
+	  (#t (error "Unknown symbol-binding ~A" binding))))	
+#+END_SRC
+
+
+*** /gerbil function/ 
+
+#+BEGIN_SRC scheme
+  (def (package-symbols package)
+    (set! package (find-package package))
+    (map car (hash->list
+	      (gx#expander-context-table
+	       (package-expander-context package)))))
+#+END_SRC
+
+
+
+*** /gerbil function/ package-external-symbols
+
+#+BEGIN_SRC scheme
+  (def (package-external-symbols package)
+    (set! package (find-package package))
+    (let* ((context (package-expander-context package))
+	   (exports (gx#module-context-export
+		     context))
+	   (symbols (map gx#module-export-name exports)))
+      #;(values (map gx#module-export-name exports) exports)
+      symbols))
+
+  (def (package-symbols package)
+    (set! package (find-package package))
+    (map car (hash->list
+	      (gx#expander-context-table
+	       (package-expander-context package)))))
+#+END_SRC
+
+
+
+** /Macro/ do-symbols, do-external-symbols, do-all-symbols 
+
+ * Syntax ::
+	     *do-symbols* (var [package [result-form]]) {declaration}* {tag | statement}*
+	     → {result}*
+	 
+	     *do-external-symbols* (var [package [result-form]]) {declaration}* {tag | statement}*
+	     → {result}*
+	     *do-all-symbols* (var [result-form]) {declaration}* {tag | statement}*
+	     → {result}*
+
+ * Arguments and Values :: 
+   
+   - /var/ —a variable name; not evaluated.
+
+   - /package/ —a package designator ; evaluated. The default in do-symbols and do-external-symbols
+is the current package.
+result-form—a form; evaluated as described below. The default is nil .
+declaration—a declare expression; not evaluated.
+tag —a go tag; not evaluated.
+statement—a compound form; evaluated as described below.
+results—the values returned by the result-form if a normal return occurs, or else, if an explicit
+return occurs, the values that were transferred.
+Description:
+do-symbols , do-external-symbols , and do-all-symbols iterate over the symbols of packages. For
+each symbol in the set of packages chosen, the var is bound to the symbol , and the statements in
+the body are executed. When all the symbols have been processed, result-form is evaluated and
+returned as the value of the macro.
+
+*do-symbols* iterates over the symbols accessible in package. Statements may execute more than
+once for symbols that are inherited from multiple packages.
+do-all-symbols iterates on every registered package. do-all-symbols will not process every symbol
+whatsoever, because a symbol not accessible in any registered package will not be processed.
+do-all-symbols may cause a symbol that is present in several packages to be processed more than
+once.
+do-external-symbols iterates on the external symbols of package.
+When result-form is evaluated, var is bound and has the value nil .
+An implicit block named nil surrounds the entire do-symbols , do-external-symbols , or
+do-all-symbols form. return or return-from may be used to terminate the iteration prematurely.
+If execution of the body affects which symbols are contained in the set of packages over which
+iteration is occurring, other than to remove the symbol currently the value of var by using unintern ,
+the consequences are undefined.
+For each of these macros, the scope of the name binding does not include any initial value form,
+but the optional result forms are included.
+Any tag in the body is treated as with tagbody .
+Examples:
+(make-package ’temp :use nil) → #<PACKAGE "TEMP">
+(intern "SHY" ’temp) → TEMP::SHY, NIL ;SHY will be an internal symbol
+;in the package TEMP
+(export (intern "BOLD" ’temp) ’temp) → T ;BOLD will be external
+(let ((lst ()))
+(do-symbols (s (find-package ’temp)) (push s lst))
+lst)
+→ (TEMP::SHY TEMP:BOLD)
+or
+→ (TEMP:BOLD TEMP::SHY)
+(let ((lst ()))
+(do-external-symbols (s (find-package ’temp) lst) (push s lst))
+lst)
+→ (TEMP:BOLD)
+(let ((lst ()))
+(do-all-symbols (s lst)
+(when (eq (find-package ’temp) (symbol-package s)) (push s lst)))
+lst)
+→ (TEMP::SHY TEMP:BOLD)
+or
+→ (TEMP:BOLD TEMP::SHY)
+See Also:
+intern , export , Section 3.6 (Traversal Rules and Side Effects)
+
+
+
+
+** /Function/ package-name
+
+ - Syntax :: 
+     package-name package
+     → name
+Arguments and Values:
+package—a package designator .
+name—a string or nil .
+Description:
+package-name returns the string that names package, or nil if the package designator is a package
+object that has no name (see the function delete-package ).
+Examples:
+(in-package "COMMON-LISP-USER") → #<PACKAGE "COMMON-LISP-USER">
+(package-name *package*) → "COMMON-LISP-USER"
+(package-name (symbol-package :test)) → "KEYWORD"
+(package-name (find-package ’common-lisp)) → "COMMON-LISP"
+(defvar *foo-package* (make-package "FOO"))
+
+*** /gerbil function/ package-name
+
+Expander contexts have a name.
+
+#+NAME: package-name
+#+BEGIN_SRC scheme
+  (def (package-name package)
+    (gx#expander-context-id
+     (package-expander-context package)))
+#+END_SRC
+
+
+* packages.ss
+
+#+BEGIN_SRC scheme :tangle "../cl/packages.ss" :noweb yes
+  (export find-package)
+  (import :std/srfi/1 :std/format)
+
+  ;; Define a class
+  <<defclass-package>>
+
+  ;; Cache the expander-context.
+  <<package<-expander-context>>
+
+  ;; package-name
+  <<package-name>>
+
+  ;; Find
+  <<find-package>>
+
+  ;; List
+  <<list-all-packages>>
+
+  <<package-external-symbols>>
+
+  <<symbol-type-package-binding>>
+#+END_SRC
+
+* HACKING
+
+
+#+BEGIN_SRC scheme
+  (with-output-to-file "/tmp/gerbil/test3.ss"
+    (lambda () (display "package: defpackage
+  (export foo delete-duplicates)
+  (import :std/srfi/1)
+
+  (def bar 1)
+  (defrules baz () (_ 1))
+  (def (foo) bar)
+  ")))
+#+END_SRC
+
+#+BEGIN_SRC scheme
+  (add-load-path "/home/drewc/src/gerbil-common-lisp/")
+  (import :drewc/cl/packages)
+#+END_SRC
+
+#+BEGIN_SRC scheme
+  (def package-root  "/tmp/gerbil/")
+  (create-directory package-root)
+  (add-load-path package-root)
+#+END_SRC
+
+#+BEGIN_SRC scheme
+
+  (def (module-import-symbol-alist module-import)
+    (let* ((source (gx#module-import-source module-import))
+	   (context (gx#module-export-context source)))
+      (list (cons symbol-name: (gx#module-export-name source))
+	    (cons symbol-package: (gx#expander-context-id context)))))
+
+  (def (find-import-binding-rename module-import)
+    ;; This is what appears to work for a rename.
+    (let* ((name (gx#module-import-name module-import))
+	   (source (gx#module-import-source module-import))
+	   (import-context (gx#module-export-context source))
+	   (bindings (gx#expander-context-table import-context)))
+	    (find (lambda (b)
+		(and (gx#import-binding? (cdr b))
+		     (eq? name (gx#binding-key
+				(gx#import-binding-e (cdr b))))))
+	      (hash->list bindings))))
+
+  (def (%%package-internal-symbols package)
+    (set! package (find-package package))
+    (when package 
+      (let* ((context (package-expander-context package))
+	     (imports (gx#module-context-import
+		       context)))
+
+	(def (symbol import)
+	(cond ((gx#module-import? import)
+	       (let* (#;(source (gx#module-import-source import))
+		      #;(import-context (gx#module-export-context source)))
+		 (cons* 
+		  (gx#module-import-name import)
+		  (find-import-binding import)
+	  ;	(gx#expander-context-table import-context)
+	   ;     
+	    ;    (gx#module-export-name source)
+	     ;   (gx#module-export-key source)
+	      ;  (gx#module-import-phi import)
+	       ; (gx#module-import-weak? import)
+		  #;(module-import-symbol-alist import)
+
+		  '())))
+	      ((gx#import-set? import)
+	       (map symbol (gx#import-set-imports import)))))
+
+      (def (flatten x)
+	(cond ((null? x) '())
+	      ((not (pair? (car x))) (list x))
+	      (else (append (flatten (car x))
+			    (flatten (cdr x))))))
+      (flatten (map symbol imports)))))
+#+END_SRC

@@ -1,0 +1,15 @@
+Gerbil: Common Lisp
+
+This is a library that contains versions of Common Lisp-like forms for
+use with Gerbil. 
+
+* Introduction
+
+Coming from ~COMMON-LISP~ over to gerbil is fairly
+straightforward. Yet, often, one's mind reaches for the known ~CL~
+version of things, and not the ~scheme~ or ~gerbil~ implementation.
+
+Thus, the *gerbil-common-lisp* ~gxpkg~ came to fruition.
+
+The Documentation freely uses our copy of the [[http://www.cs.cmu.edu/afs/cs/project/ai-repository/ai/lang/lisp/doc/standard/ansi/0.html][Draft ANSI Standard for
+Common Lisp]].
